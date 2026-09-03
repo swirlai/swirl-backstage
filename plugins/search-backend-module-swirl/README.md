@@ -70,7 +70,7 @@ search:
         titleNgram: 2
         text: 1
       ngram:
-        min: 3
+        min: 4
         max: 5
       stemmer: en
       stopwords: []
