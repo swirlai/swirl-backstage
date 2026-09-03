@@ -2,3 +2,9 @@ dist
 dist-types
 coverage
 .vscode
+
+# The e2e Backstage app is create-app output, and the catalog fixtures are
+# copies of the Backstage example entities. Neither is ours to reformat.
+e2e/app
+e2e/fixtures/catalog
+e2e/.logs

@@ -1,0 +1,42 @@
+{
+  "name": "backend",
+  "version": "0.0.0",
+  "main": "dist/index.cjs.js",
+  "types": "src/index.ts",
+  "private": true,
+  "backstage": {
+    "role": "backend"
+  },
+  "scripts": {
+    "start": "backstage-cli package start",
+    "build": "backstage-cli package build",
+    "lint": "backstage-cli package lint",
+    "clean": "backstage-cli package clean"
+  },
+  "dependencies": {
+    "@backstage/backend-defaults": "^0.17.7",
+    "@backstage/config": "^1.3.8",
+    "@backstage/plugin-auth-backend": "^0.30.0",
+    "@backstage/plugin-auth-backend-module-guest-provider": "^0.2.22",
+    "@backstage/plugin-auth-node": "^0.7.4",
+    "@backstage/plugin-catalog-backend": "^3.9.0",
+    "@backstage/plugin-permission-backend": "^0.7.15",
+    "@backstage/plugin-permission-backend-module-allow-all-policy": "^0.2.22",
+    "@backstage/plugin-permission-common": "^0.9.10",
+    "@backstage/plugin-permission-node": "^0.11.3",
+    "@backstage/plugin-search-backend": "^2.1.5",
+    "@backstage/plugin-search-backend-module-catalog": "^0.3.18",
+    "@backstage/plugin-search-backend-module-techdocs": "^0.4.17",
+    "@backstage/plugin-search-backend-node": "^1.4.7",
+    "@backstage/plugin-techdocs-backend": "^2.2.3",
+    "@swirl-search/backstage-plugin-search-backend-module-swirl": "link:../../../../plugins/search-backend-module-swirl",
+    "better-sqlite3": "^12.0.0",
+    "node-gyp": "^10.0.0"
+  },
+  "devDependencies": {
+    "@backstage/cli": "^0.36.5"
+  },
+  "files": [
+    "dist"
+  ]
+}

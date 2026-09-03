@@ -1,0 +1,100 @@
+# The e2e Backstage app (WP09). Everything here is local to the e2e run:
+# ports 3100 and 7100 so nothing collides with a Backstage on 3000/7007, an
+# in-memory SQLite database so each run starts clean, and guest auth.
+app:
+  title: SWIRL e2e
+  baseUrl: http://localhost:3100
+
+organization:
+  name: SWIRL e2e
+
+backend:
+  baseUrl: http://localhost:7100
+  listen:
+    port: 7100
+    host: 127.0.0.1
+  csp:
+    connect-src: ["'self'", 'http:', 'https:']
+  cors:
+    origin: http://localhost:3100
+    methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+    credentials: true
+  database:
+    client: better-sqlite3
+    connection: ':memory:'
+
+auth:
+  providers:
+    guest: {}
+
+# The allow-all policy from create-app is wired in packages/backend/src/index.ts.
+# Permissions stay on so the search router runs the query through
+# AuthorizedSearchEngine, which is the code path the e2e assertions care about.
+permission:
+  enabled: true
+
+techdocs:
+  builder: 'local'
+  generator:
+    runIn: 'local'
+  publisher:
+    type: 'local'
+
+catalog:
+  rules:
+    - allow:
+        [Component, System, API, Resource, Location, Domain, AiResource, User, Group]
+  locations:
+    # File targets are relative to the backend process, which runs in
+    # packages/backend. These are the Backstage example entities copied into
+    # e2e/fixtures/catalog, plus the entities WP00 planted for the gate-zero
+    # cases (see e2e/fixtures/catalog/planted.yaml).
+    - type: file
+      target: ../../../fixtures/catalog/all.yaml
+    - type: file
+      target: ../../../fixtures/catalog/acme-corp.yaml
+      rules:
+        - allow: [User, Group]
+    - type: file
+      target: ../../../fixtures/catalog/planted.yaml
+
+search:
+  # The e2e run cannot wait 10 minutes for the first collator pass, and the
+  # restart assertion needs the index to survive without one, so the schedule is
+  # short and starts almost immediately.
+  #
+  # The two collators are deliberately 15 seconds apart. Started together they
+  # both call POST /swirl/index/<type>/begin/ in the same instant, and the
+  # SQLite build of the SWIRL image answers the second one with a 500
+  # ("sqlite3.OperationalError: database is locked") after it has already
+  # created the generation directory, so the type is then wedged behind a 409
+  # until the begin TTL expires. See e2e/README.md, "Known SWIRL-side defect".
+  collators:
+    catalog:
+      schedule:
+        initialDelay: { seconds: 5 }
+        frequency: { seconds: 30 }
+        timeout: { minutes: 3 }
+    techdocs:
+      schedule:
+        initialDelay: { seconds: 20 }
+        frequency: { seconds: 30 }
+        timeout: { minutes: 3 }
+  swirl:
+    # The SWIRL for Backstage container from e2e/compose.yaml. Host port 8011,
+    # not 8001: see e2e/README.md.
+    baseUrl: http://localhost:8011
+    federated:
+      providerTags: ['backstage']
+    # Typo tolerance. WP00 cleared the "petsotre" gate-zero case only with
+    # fuzzy_fields on, and SWIRL ships it off, so the e2e has to turn it on.
+    #
+    # These are SWIRL's own tuning key names, not the nested camelCase block in
+    # the plugin's config.d.ts. The engine posts this block to
+    # POST /swirl/index/config/ verbatim and SWIRL's Tuning.from_dict ignores
+    # every key it does not know, so the documented shape
+    # (tuning.fuzzy.enabled) is accepted by Backstage and then silently
+    # dropped by SWIRL. See e2e/README.md, "Known plugin-side defect".
+    tuning:
+      fuzzy_enabled: true
+      fuzzy_distance: 1

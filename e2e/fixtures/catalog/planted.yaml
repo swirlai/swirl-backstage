@@ -1,0 +1,73 @@
+# Entities planted for the end to end gate-zero cases.
+#
+# The Backstage example catalog copied into this directory already carries
+# petstore and wayback-search, which two of the gate-zero cases need. It has no
+# abacus, no foo-bar.com and no tech-radar, so the cases quoted from the
+# Backstage search issues have nothing to find. WP00 planted the same five
+# entities into its synthetic corpus (reboot-design/gauntlet-results.md); these
+# are the catalog form of that plant, so the e2e assertions match the gauntlet
+# assertions document for document.
+#
+# The three *-service components at the bottom exist for the filter case: the
+# term "service" has to appear in a title or a description for a
+# kind=component + lifecycle=production filter to have anything to keep, and
+# one of them is deliberately experimental so the filter has something to drop.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: abacus
+  description: The abacus counting service, kept for the reporting rollup.
+spec:
+  type: service
+  lifecycle: production
+  owner: team-b
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: foo-bar.com
+  description: The public marketing site.
+spec:
+  type: website
+  lifecycle: production
+  owner: team-b
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: tech-radar
+  description: The engineering technology radar.
+spec:
+  type: website
+  lifecycle: production
+  owner: team-d
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: payment-gateway-service
+  description: Payment gateway service, production traffic.
+spec:
+  type: service
+  lifecycle: production
+  owner: team-a
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: user-profile-service
+  description: User profile service, production traffic.
+spec:
+  type: service
+  lifecycle: production
+  owner: team-c
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: legacy-billing-service
+  description: Legacy billing service, not production, kept for the filter case.
+spec:
+  type: service
+  lifecycle: experimental
+  owner: team-c

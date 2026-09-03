@@ -1,0 +1,25 @@
+{
+  "name": "swirl-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": "22 || 24"
+  },
+  "scripts": {
+    "start": "yarn workspace backend start",
+    "build:backend": "yarn workspace backend build",
+    "tsc": "tsc",
+    "clean": "backstage-cli repo clean",
+    "lint:all": "backstage-cli repo lint"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@backstage/cli": "^0.36.5",
+    "@backstage/cli-defaults": "^0.1.5",
+    "node-gyp": "^10.0.0",
+    "typescript": "~5.8.0"
+  },
+  "packageManager": "yarn@4.12.0"
+}

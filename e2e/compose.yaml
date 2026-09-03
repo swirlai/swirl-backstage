@@ -1,0 +1,56 @@
+# The SWIRL side of the WP09 end to end run.
+#
+#   docker compose -f e2e/compose.yaml up -d
+#
+# Copied from docker/backstage/compose.yaml in the SWIRL repository (TECH_DESIGN
+# section 3.8) and changed in three ways, all of them so this can run beside a
+# developer's own SWIRL and Backstage rather than instead of them:
+#
+#   * project name swirl-e2e, container name swirl-e2e, volume swirl-e2e-data;
+#   * host port 8011, because 8000 and 8001 are usually already taken;
+#   * SWIRL_BACKSTAGE_JWKS_URL points at the e2e Backstage backend on the host,
+#     so SWIRL verifies the plugin tokens the search router mints.
+#
+# The admin password below is a local test credential for a container that
+# listens on 127.0.0.1 only and is torn down at the end of the run. Override it
+# with SWIRL_E2E_ADMIN_PASSWORD; nothing in this repo ever talks to a SWIRL that
+# holds real data.
+name: swirl-e2e
+
+services:
+  swirl:
+    image: swirlai/swirl-backstage:dev
+    container_name: swirl-e2e
+    ports:
+      - '127.0.0.1:8011:8000'
+    volumes:
+      - swirl-e2e-data:/data
+    environment:
+      ALLOWED_HOSTS: 'localhost,127.0.0.1,swirl,swirl-e2e'
+      CSRF_TRUSTED_ORIGINS: 'http://localhost:8011'
+      SQL_ENGINE: django.db.backends.sqlite3
+      SQL_DATABASE: /data/db.sqlite3
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/0
+      SWIRL_TANTIVY_DATA_DIR: /data/tantivy
+      SWIRL_TANTIVY_WRITER_HEAP_MB: '64'
+      SWIRL_SPACY_MODEL_EN: en_core_web_sm
+      # The e2e Backstage backend runs on the host, on port 7100.
+      SWIRL_BACKSTAGE_JWKS_URL: 'http://host.docker.internal:7100/api/search/.backstage/auth/v1/jwks.json'
+      SWIRL_BACKSTAGE_AUDIENCE: 'search'
+      SWIRL_ADMIN_PASSWORD: '${SWIRL_E2E_ADMIN_PASSWORD:-swirl-e2e-local}'
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/swirl/sapi/health/backstage/', timeout=4).status == 200 else 1)"
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 36
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+
+volumes:
+  swirl-e2e-data:

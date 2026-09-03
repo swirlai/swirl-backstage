@@ -12,8 +12,18 @@ The service side (the SWIRL ingest API, the Backstage bearer verifier, the Tanti
 
 ```
 plugins/search-backend-module-swirl   the published npm package
+e2e/                                  the end to end suite: `yarn e2e`
+e2e/app                               a trimmed create-app Backstage with the module wired in
+e2e/compose.yaml                      the SWIRL for Backstage container the suite runs against
 e2e/stub-swirl                        a small in-memory stand-in for SWIRL, for local checks
 ```
+
+## End to end
+
+`yarn e2e` starts a real SWIRL for Backstage container and a real Backstage
+backend with this module wired in, then asserts on `GET /api/search/query`.
+It needs Docker and the `swirlai/swirl-backstage:dev` image. See
+[e2e/README.md](e2e/README.md), which also records the defects the suite found.
 
 ## Working in this repo
 
