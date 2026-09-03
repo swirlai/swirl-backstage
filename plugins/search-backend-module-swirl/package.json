@@ -1,0 +1,75 @@
+{
+  "name": "@swirl-search/backstage-plugin-search-backend-module-swirl",
+  "version": "0.1.0",
+  "description": "A Backstage search backend module that uses SWIRL as the search engine, for indexed Backstage documents and federated results from connected sources.",
+  "backstage": {
+    "role": "backend-plugin-module",
+    "pluginId": "search",
+    "pluginPackage": "@backstage/plugin-search-backend"
+  },
+  "publishConfig": {
+    "access": "public",
+    "main": "dist/index.cjs.js",
+    "types": "dist/index.d.ts"
+  },
+  "keywords": [
+    "backstage",
+    "search",
+    "swirl",
+    "federated-search"
+  ],
+  "homepage": "https://github.com/swirlai/swirl-backstage",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/swirlai/swirl-backstage",
+    "directory": "plugins/search-backend-module-swirl"
+  },
+  "bugs": {
+    "url": "https://github.com/swirlai/swirl-backstage/issues"
+  },
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./alpha": "./src/alpha.ts",
+    "./package.json": "./package.json"
+  },
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "typesVersions": {
+    "*": {
+      "alpha": [
+        "src/alpha.ts"
+      ],
+      "package.json": [
+        "package.json"
+      ]
+    }
+  },
+  "files": [
+    "dist",
+    "config.d.ts"
+  ],
+  "scripts": {
+    "build": "backstage-cli package build",
+    "clean": "backstage-cli package clean",
+    "lint": "backstage-cli package lint",
+    "prepack": "backstage-cli package prepack",
+    "postpack": "backstage-cli package postpack",
+    "start": "backstage-cli package start",
+    "test": "backstage-cli package test"
+  },
+  "dependencies": {
+    "@backstage/backend-plugin-api": "^1.10.0",
+    "@backstage/config": "^1.3.8",
+    "@backstage/errors": "^1.3.1",
+    "@backstage/plugin-search-backend-node": "^1.4.7",
+    "@backstage/plugin-search-common": "^1.2.24"
+  },
+  "devDependencies": {
+    "@backstage/backend-test-utils": "^1.11.6",
+    "@backstage/cli": "^0.36.5",
+    "@backstage/plugin-search-backend": "^2.1.6",
+    "msw": "^2.0.0"
+  },
+  "configSchema": "config.d.ts"
+}

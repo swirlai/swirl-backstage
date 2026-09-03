@@ -1,0 +1,10 @@
+# Default owner for everything in this repository.
+*                                    @swirlai/engineering
+
+# The published package.
+/plugins/search-backend-module-swirl/ @swirlai/engineering
+
+# Release, licensing and security surfaces.
+/.changeset/                         @swirlai/engineering
+/LICENSE                             @swirlai/engineering
+/SECURITY.md                         @swirlai/engineering
