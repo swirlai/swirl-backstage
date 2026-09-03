@@ -41,6 +41,24 @@ describe('the swirl-federated lane', () => {
     expect(
       federated.some(entry => entry.document.location.startsWith(STUB_HOST)),
     ).toBe(true);
+
+    // A federated document reaches a renderer as plain text, so none of
+    // SWIRL's own highlight markers may be in it. The marked up text belongs
+    // in highlight.fields, with this engine instance's per run tags.
+    for (const entry of federated) {
+      expect(entry.document.title).not.toMatch(/<em>|<\/em>/);
+      expect(entry.document.text ?? '').not.toMatch(/<em>|<\/em>/);
+    }
+    const highlighted = federated.filter(
+      entry => entry.highlight && Object.keys(entry.highlight.fields).length,
+    );
+    expect(highlighted.length).toBeGreaterThanOrEqual(1);
+    for (const entry of highlighted) {
+      for (const value of Object.values(entry.highlight.fields)) {
+        expect(value).toContain(entry.highlight.preTag);
+        expect(value).not.toMatch(/<em>/);
+      }
+    }
   });
 
   it('leaves the federated lane out when the caller asks only for software-catalog', async () => {

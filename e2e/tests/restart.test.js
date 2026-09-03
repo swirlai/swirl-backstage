@@ -16,16 +16,15 @@
 
 // The Tantivy index lives on the /data volume, so a container that comes back
 // answers the same query from the same generation with no collator run in
-// between. Two separate properties are asserted here, because today only one
-// of them holds:
+// between. Two separate properties are asserted here:
 //
-//   1. `docker compose restart` brings the container back healthy. It does
-//      not: the entrypoint refuses to restart Celery, so the health endpoint
-//      never leaves 503 and /swirl/search/ has no worker. That is an image
-//      defect, not an index defect. See e2e/README.md, "Known SWIRL-side
-//      defects".
-//   2. The index itself survives the container. It does, and the second case
-//      proves it on a freshly created container against the same volume.
+//   1. `docker compose restart` brings the container back healthy. This used
+//      to fail: the entrypoint left the previous run's pid file in the
+//      writable layer, swirl.py refused to start Celery over it, and the
+//      health endpoint never left 503. The image now clears that pid state
+//      before starting Celery.
+//   2. The index itself survives the container. The second case proves it on
+//      a freshly created container against the same volume.
 //
 // This file must run last. e2e/testSequencer.js makes sure of that.
 

@@ -56,13 +56,13 @@ which is what you want while editing a test.
 
 ## The assertions
 
-| File                        | What it asserts                                                                                                                                      |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/gate-zero.test.js`   | The seven gate-zero cases from `reboot-design/gauntlet-results.md`, end to end: `tech`, `abac`, `foo-bar.com`, `store`, `mes`, `wayback`, `petsotre` |
-| `tests/federated.test.js`   | A `swirl-federated` result located at the stub source appears; asking only for `software-catalog` leaves the federated lane out                      |
-| `tests/filters.test.js`     | `kind=component` plus `lifecycle=production` returns only matching documents, and drops one the term alone would have kept                           |
-| `tests/permissions.test.js` | The guest token shape, and that the query runs through `AuthorizedSearchEngine`                                                                      |
-| `tests/restart.test.js`     | The container comes back, and the index is on disk                                                                                                   |
+| File                        | What it asserts                                                                                                                                                                          |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/gate-zero.test.js`   | The seven gate-zero cases from `reboot-design/gauntlet-results.md`, end to end: `tech`, `abac`, `foo-bar.com`, `store`, `mes`, `wayback`, `petsotre`                                     |
+| `tests/federated.test.js`   | A `swirl-federated` result located at the stub source appears, with clean document text and populated highlight fields; asking only for `software-catalog` leaves the federated lane out |
+| `tests/filters.test.js`     | `kind=component` plus `lifecycle=production` returns only matching documents, and drops one the term alone would have kept                                                               |
+| `tests/permissions.test.js` | The guest token shape, and that the query runs through `AuthorizedSearchEngine`                                                                                                          |
+| `tests/restart.test.js`     | The container comes back, and the index is on disk                                                                                                                                       |
 
 The files are not independent - the restart case takes the container down - so
 `e2e/testSequencer.js` pins the order and `maxWorkers: 1` keeps them one at a
@@ -96,20 +96,18 @@ document for document.
 `acme-corp.yaml` brings in `team-a` through `team-d`, which is what the `tech`
 case needs something to rank below.
 
-## Known SWIRL-side defects, found by this suite
+## Defects this suite found, and where they were fixed
 
-Both are in the SWIRL repository, not in this one. Neither is patched here.
+All four were found here and fixed in the SWIRL repository and in this one.
+The assertions that used to fail on purpose now pass.
 
-### 1. The container does not survive a restart
+### 1. The container did not survive a restart
 
-`docker compose restart swirl` brings daphne and Redis back but not Celery, so
-`/swirl/sapi/health/backstage/` stays on 503 forever and `/swirl/search/` has no
-worker. `tests/restart.test.js` fails on this, on purpose.
-
-The cause is a stale pid file. `docker/backstage/entrypoint.sh` calls
-`python swirl.py start celery-worker celery-beats`, and `swirl.py` reads
-`/app/.swirl`, which after a restart still holds the pids from the previous
-container process tree:
+`docker compose restart swirl` brought daphne and Redis back but not Celery, so
+`/swirl/sapi/health/backstage/` stayed on 503 forever and `/swirl/search/` had
+no worker. The cause was a stale pid file: `swirl.py` writes `/app/.swirl` and
+refuses to start a service named in it, and that file lives in the container's
+writable layer, which a restart keeps:
 
 ```
 $ docker exec swirl-e2e cat /app/.swirl
@@ -119,76 +117,59 @@ entrypoint: starting celery
   celery-worker is already running - remove .swirl if this is incorrect
 ```
 
-`/app/.swirl` is in the container's writable layer, not on the `/data` volume,
-so `docker compose up --force-recreate` clears it and a fresh container is fine.
-A restart, and therefore also the `restart: unless-stopped` policy in the
-shipped `docker/backstage/compose.yaml`, is not. The fix belongs in the
-entrypoint: remove the file, or validate the pids in it, before starting Celery.
+Fixed in `docker/backstage/clear_stale_pids.sh`, called by the entrypoint
+before `swirl.py start`. It removes `/app/.swirl` and celery beat's
+`celerybeat.pid` without validating the pids, because a fresh container process
+tree cannot have children of the previous run and container pids are reused.
 
-The second case in `tests/restart.test.js` recreates the container instead, on
-the same volume, and asserts the live generation id is unchanged and `store`
-still returns `petstore`. That is the property the restart case was written for,
-and it holds: the index is genuinely on disk.
+### 2. Two collators beginning a generation in the same instant wedged a type
 
-### 2. Two collators beginning a generation in the same instant wedge a type
+With both collators on the same schedule they called
+`POST /swirl/index/<type>/begin/` in the same instant. The second got an HTTP
+500 out of `sqlite3.OperationalError: database is locked`, raised from the
+bookkeeping write after the generation directory and the OPEN lock already
+existed, so the type was left with a generation nobody would finalize and every
+later `begin` got a 409 until `SWIRL_TANTIVY_BEGIN_TTL` expired.
 
-With both collators on the same schedule they call
-`POST /swirl/index/<type>/begin/` in the same instant. The second one gets an
-HTTP 500 with a Django error page, from
+Fixed in `swirl/tantivy_index/generations.py` and `swirl/views_index.py`: the
+OPEN lock is taken with an exclusive create before anything else exists on
+disk, the bookkeeping row is written inside that lock in one transaction with a
+short retry, and a write that still cannot land rolls the directory and the
+lock back. The TTL also dropped from two hours to thirty minutes, and the
+SearchIndexGeneration admin gained an action to clear a stale lock. The 15
+second gap between the two collator schedules in `e2e/app/app-config.yaml`
+stays, so this suite exercises the ordinary path; the race itself is covered by
+SWIRL's own regression tests.
 
-```
-sqlite3.OperationalError: database is locked
-```
+### 3. The documented tuning block was dropped by SWIRL
 
-raised out of `SearchIndexGeneration.objects.get_or_create`. The generation
-directory has already been created by then, so the type is left with an open
-generation nobody will ever finalize, and every later `begin` gets a 409 until
-`SWIRL_TANTIVY_BEGIN_TTL` (two hours) expires:
+`config.d.ts` documents `search.swirl.tuning` as nested camelCase -
+`tuning.fuzzy.enabled`, `tuning.fieldBoosts.titleExact` - and
+`SwirlSearchEngine.pushTuning` posts it to `POST /swirl/index/config/`
+verbatim. SWIRL's `Tuning.from_dict` read only flat snake_case names and
+ignored the rest, so an operator's whole tuning block was accepted by Backstage
+and then did nothing.
 
-```
-Collating documents for software-catalog failed: Error: SWIRL refused to open a
-generation for software-catalog: HTTP 409 {"detail":"a generation is already
-open for type \"software-catalog\": 20260903T195515-269297 (open for 30 s)"}
-```
+Fixed on the SWIRL side: `from_dict` accepts both shapes, rejects an unknown
+key with a 400 that names it rather than dropping it, and answers with the
+effective tuning plus `accepted_keys`. `bm25.k1` and `bm25.b` are accepted and
+stored, but tantivy-py binds no BM25 parameters, so the response also carries
+`"bm25": "not applied by this engine version"`. The engine logs `accepted_keys`
+and that notice at startup, and warns with the rejected keys on a 400 without
+failing the boot. `e2e/app/app-config.yaml` is back on the documented shape.
 
-The workaround here is the 15 second gap between the two collator schedules in
-`e2e/app/app-config.yaml`. A real fix is on the SWIRL side: the ingest views
-need to hold the filesystem generation and the bookkeeping row together, and
-SQLite needs WAL mode or a retry.
+### 4. Federated results carried SWIRL's `<em>` markers in the document
 
-## Known plugin-side defect, found by this suite
+Federated result titles and bodies arrived with SWIRL's highlight markers
+inline in `document.title` and `document.text`, while `highlight.fields` stayed
+empty. Backstage renders document text as plain text, so the markers showed up
+on screen.
 
-The `search.swirl.tuning` block in `config.d.ts` is documented as nested
-camelCase - `tuning.fuzzy.enabled`, `tuning.fieldBoosts.titleExact` - and
-`SwirlSearchEngine.pushTuning` posts it to `POST /swirl/index/config/` verbatim.
-SWIRL's `Tuning.from_dict` takes flat snake_case names and ignores every key it
-does not recognise, so the documented block is accepted by Backstage and then
-silently dropped:
-
-```
-$ curl -u admin:... -X POST http://localhost:8011/swirl/index/config/ \
-    -d '{"fuzzy":{"enabled":true,"distance":1}}'
-{... "fuzzy_enabled": false, "fuzzy_distance": 1 ...}
-
-$ curl -u admin:... -X POST http://localhost:8011/swirl/index/config/ \
-    -d '{"fuzzy_enabled":true}'
-{... "fuzzy_enabled": true ...}
-```
-
-The `petsotre` gate-zero case needs `fuzzy_enabled`, so `e2e/app/app-config.yaml`
-uses SWIRL's own key names. Either the engine module should translate the
-documented shape into SWIRL's, or `config.d.ts` should describe the shape SWIRL
-actually reads. Until one of those happens, every tuning value an operator sets
-in the documented shape does nothing.
-
-## Other observations
-
-Federated result titles and bodies arrive with SWIRL's `<em>` highlight markers
-inline in `document.title` and `document.text`, while `highlight.fields` stays
-empty. Backstage renders the document text as plain text, so the markers show up
-as literal `<em>`. The engine maps SWIRL's `title` and `body` straight through;
-the highlight rewrite only looks at `title_hit_highlights` and
-`body_hit_highlights`.
+Fixed on both sides. SWIRL moves the marked up value into
+`title_hit_highlights` / `body_hit_highlights` and leaves the plain fields
+clean, on the Backstage path only. The engine strips the configured marker pair
+out of a federated `document.title` and `document.text` defensively, since an
+older SWIRL will not have done it. `tests/federated.test.js` asserts both.
 
 ## The e2e app
 
@@ -209,9 +190,10 @@ what a wiring check wants.
 
 `app-config.yaml` sets the backend to 7100, the app to 3100, guest auth,
 `permission.enabled: true`, `search.swirl.baseUrl: http://localhost:8011`,
-`search.swirl.federated.providerTags: ["backstage"]`, the catalog locations
-above, and a collator schedule of every 30 seconds with a 5 second initial
-delay, so a run does not spend ten minutes waiting for the first index.
+`search.swirl.federated.providerTags: ["backstage"]`, the documented nested
+`search.swirl.tuning` block, the catalog locations above, and a collator
+schedule of every 30 seconds with a 5 second initial delay, so a run does not
+spend ten minutes waiting for the first index.
 
 SWIRL verifies the plugin tokens the search router mints against the backend's
 own JWKS at

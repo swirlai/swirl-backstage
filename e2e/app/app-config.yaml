@@ -63,12 +63,14 @@ search:
   # restart assertion needs the index to survive without one, so the schedule is
   # short and starts almost immediately.
   #
-  # The two collators are deliberately 15 seconds apart. Started together they
-  # both call POST /swirl/index/<type>/begin/ in the same instant, and the
-  # SQLite build of the SWIRL image answers the second one with a 500
-  # ("sqlite3.OperationalError: database is locked") after it has already
-  # created the generation directory, so the type is then wedged behind a 409
-  # until the begin TTL expires. See e2e/README.md, "Known SWIRL-side defect".
+  # The two collators stay 15 seconds apart. The race they used to trip is
+  # fixed: POST /swirl/index/<type>/begin/ now takes the generation lock with
+  # an exclusive create and writes its bookkeeping row inside that lock, so the
+  # second caller gets a clean 409 instead of a 500 over a half-created
+  # generation that wedged the type until the TTL expired. Keeping the gap
+  # means this suite exercises the ordinary path rather than the race on every
+  # run; the race itself is covered by SWIRL's own regression tests
+  # (test_views_index.py::test_two_simultaneous_begins_do_not_wedge_the_type).
   collators:
     catalog:
       schedule:
@@ -87,14 +89,15 @@ search:
     federated:
       providerTags: ['backstage']
     # Typo tolerance. WP00 cleared the "petsotre" gate-zero case only with
-    # fuzzy_fields on, and SWIRL ships it off, so the e2e has to turn it on.
+    # fuzzy fields on, and SWIRL ships it off, so the e2e has to turn it on.
     #
-    # These are SWIRL's own tuning key names, not the nested camelCase block in
-    # the plugin's config.d.ts. The engine posts this block to
-    # POST /swirl/index/config/ verbatim and SWIRL's Tuning.from_dict ignores
-    # every key it does not know, so the documented shape
-    # (tuning.fuzzy.enabled) is accepted by Backstage and then silently
-    # dropped by SWIRL. See e2e/README.md, "Known plugin-side defect".
+    # This is the documented nested camelCase shape from the plugin's
+    # config.d.ts. The engine posts it to POST /swirl/index/config/ verbatim,
+    # and SWIRL's Tuning.from_dict now folds the nested names onto its own
+    # flat ones instead of dropping them, so what an operator writes here is
+    # what SWIRL applies. The engine logs the accepted_keys SWIRL answers with
+    # at startup, which is how you can see that from the backend log.
     tuning:
-      fuzzy_enabled: true
-      fuzzy_distance: 1
+      fuzzy:
+        enabled: true
+        distance: 1

@@ -143,6 +143,14 @@ export class SwirlSearchEngine implements SearchEngine {
    * Mirrors the app-config tuning block to SWIRL so that relevance is
    * configured in one place. A SWIRL that is not up yet, or an older SWIRL
    * that does not know the endpoint, must not stop the backend from booting.
+   *
+   * SWIRL answers with the effective tuning in its own flat form plus
+   * `accepted_keys`, naming every key it took in the shape it was sent, and a
+   * `bm25` notice when it stored BM25 parameters it cannot apply. Both are
+   * logged, because a tuning block that is accepted by Backstage and then
+   * quietly dropped by SWIRL is exactly the failure this call exists to make
+   * visible. A 400 names the keys SWIRL did not recognise; that is a warning,
+   * not a boot failure.
    */
   private async pushTuning(): Promise<void> {
     try {
@@ -155,13 +163,37 @@ export class SwirlSearchEngine implements SearchEngine {
       });
 
       if (!result.ok) {
+        const rejected = rejectedTuningKeys(result.body);
+        const detail = rejected.length
+          ? ` SWIRL did not recognise: ${rejected.join(', ')}.`
+          : describeTuningError(result.body);
         this.logger.warn(
-          `SWIRL rejected the relevance tuning block: HTTP ${result.status}. SWIRL keeps its current tuning.`,
+          `SWIRL rejected the relevance tuning block: HTTP ${result.status}.${detail} SWIRL keeps its current tuning.`,
         );
         return;
       }
 
-      this.logger.info('Mirrored the relevance tuning block to SWIRL');
+      const body = (result.body ?? {}) as {
+        accepted_keys?: unknown;
+        bm25?: unknown;
+      };
+      const accepted = Array.isArray(body.accepted_keys)
+        ? body.accepted_keys.map(String)
+        : [];
+
+      this.logger.info(
+        accepted.length
+          ? `Mirrored the relevance tuning block to SWIRL; SWIRL accepted: ${accepted.join(
+              ', ',
+            )}`
+          : 'Mirrored the relevance tuning block to SWIRL; SWIRL reported no accepted tuning keys',
+      );
+
+      if (typeof body.bm25 === 'string' && body.bm25) {
+        this.logger.warn(
+          `SWIRL stored the bm25 tuning values but reports them "${body.bm25}", so search.swirl.tuning.bm25 has no effect on ranking.`,
+        );
+      }
     } catch (e) {
       this.logger.warn(
         `Could not send the relevance tuning block to SWIRL at ${this.options.baseUrl}: ${e}. SWIRL keeps its current tuning.`,
@@ -384,8 +416,14 @@ export class SwirlSearchEngine implements SearchEngine {
       document: indexed
         ? (backstage!.document as any)
         : {
-            title: entry.title ?? '',
-            text: entry.body ?? '',
+            // Stripped defensively. SWIRL's relevancy processor writes the
+            // marked up text back over `title` and `body`, which is what its
+            // own UI renders; a Backstage renderer shows document text as
+            // plain text, so the markers arrived on screen as literal
+            // `<em>`. Current SWIRL keeps these fields clean, older ones do
+            // not, and the engine has to be safe against both.
+            title: this.stripMarkers(entry.title),
+            text: this.stripMarkers(entry.body),
             location: entry.url ?? '',
             source: entry.searchprovider ?? '',
             // Federated results are not in any Backstage index, so SWIRL's
@@ -403,6 +441,9 @@ export class SwirlSearchEngine implements SearchEngine {
       return { preTag: this.preTag, postTag: this.postTag, fields: {} };
     }
 
+    // Only the hit highlight lists. A marker sitting in the plain title or
+    // body is not a hit - SWIRL keeps its hits in these two lists - and using
+    // the plain field here would let a document forge its own highlight.
     const fields: Record<string, string> = {};
     const title = this.rewriteHighlight(entry.title_hit_highlights);
     const text = this.rewriteHighlight(entry.body_hit_highlights);
@@ -415,6 +456,15 @@ export class SwirlSearchEngine implements SearchEngine {
     }
 
     return { preTag: this.preTag, postTag: this.postTag, fields };
+  }
+
+  /** Removes the configured marker pair, leaving the text it wrapped. */
+  private stripMarkers(value: string | undefined): string {
+    if (!value) {
+      return '';
+    }
+    const { startMarker, endMarker } = this.options.highlight;
+    return value.split(startMarker).join('').split(endMarker).join('');
   }
 
   /**
@@ -464,6 +514,33 @@ export class SwirlSearchEngine implements SearchEngine {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The keys SWIRL named in a 400 from POST /swirl/index/config/. SWIRL answers
+ * an unrecognised key with a detail line that starts
+ * "unknown tuning key(s): a, b." rather than dropping it in silence.
+ */
+function rejectedTuningKeys(body: any): string[] {
+  const detail = typeof body?.detail === 'string' ? body.detail : '';
+  const match = detail.match(/unknown tuning key\(s\):\s*(.*)/i);
+  if (!match) {
+    return [];
+  }
+  // The detail continues "... Known keys are ...", and a nested key such as
+  // fuzzy.bogus has a dot in it, so cut on that phrase rather than on a dot.
+  return match[1]
+    .split(/\.\s*Known keys/i)[0]
+    .replace(/\.\s*$/, '')
+    .split(',')
+    .map((key: string) => key.trim())
+    .filter(Boolean);
+}
+
+/** Whatever SWIRL said about a tuning block it would not take. */
+function describeTuningError(body: any): string {
+  const detail = typeof body?.detail === 'string' ? body.detail : '';
+  return detail ? ` ${detail}` : '';
 }
 
 function missingIndexError(types?: unknown): Error {

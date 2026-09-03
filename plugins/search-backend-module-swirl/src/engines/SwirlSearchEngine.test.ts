@@ -171,6 +171,107 @@ describe('SwirlSearchEngine', () => {
       );
     });
 
+    it('logs the keys SWIRL accepted', async () => {
+      stubSwirl({
+        configEndpoint: () =>
+          HttpResponse.json({
+            fuzzy_enabled: true,
+            accepted_keys: ['fuzzy.enabled', 'fieldBoosts.titleExact'],
+          }),
+      });
+
+      await SwirlSearchEngine.fromConfig(
+        config({ tuning: { fuzzy: { enabled: true } } }),
+        { logger, auth },
+      );
+
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.stringContaining('fuzzy.enabled, fieldBoosts.titleExact'),
+      );
+    });
+
+    it('says so when SWIRL reports no accepted tuning keys', async () => {
+      stubSwirl({
+        configEndpoint: () => HttpResponse.json({ accepted_keys: [] }),
+      });
+
+      await SwirlSearchEngine.fromConfig(config(), { logger, auth });
+
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.stringContaining('no accepted tuning keys'),
+      );
+    });
+
+    it('warns when SWIRL cannot apply the bm25 values', async () => {
+      stubSwirl({
+        configEndpoint: () =>
+          HttpResponse.json({
+            bm25_k1: 1.4,
+            accepted_keys: ['bm25.k1', 'bm25.b'],
+            bm25: 'not applied by this engine version',
+          }),
+      });
+
+      await SwirlSearchEngine.fromConfig(
+        config({ tuning: { bm25: { k1: 1.4, b: 0.5 } } }),
+        { logger, auth },
+      );
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('not applied by this engine version'),
+      );
+    });
+
+    it('does not warn about bm25 when SWIRL says nothing about it', async () => {
+      logger.warn.mockClear();
+      stubSwirl({
+        configEndpoint: () => HttpResponse.json({ accepted_keys: ['stemmer'] }),
+      });
+
+      await SwirlSearchEngine.fromConfig(
+        config({ tuning: { stemmer: 'en' } }),
+        {
+          logger,
+          auth,
+        },
+      );
+
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        expect.stringContaining('bm25'),
+      );
+    });
+
+    it('lists the tuning keys SWIRL rejected, and still boots', async () => {
+      logger.warn.mockClear();
+      worker.use(
+        http.post(`${BASE_URL}/swirl/index/config/`, () =>
+          HttpResponse.json(
+            {
+              // The wording SWIRL's config endpoint uses.
+              detail:
+                'unknown tuning key(s): nonsense, fuzzy.bogus. Known keys are ' +
+                'the SWIRL names (bm25_b, bm25_k1, ...) and the nested ' +
+                'Backstage names (bm25.b, bm25.k1, ...).',
+            },
+            { status: 400 },
+          ),
+        ),
+      );
+
+      await expect(
+        SwirlSearchEngine.fromConfig(config({ tuning: { stemmer: 'en' } }), {
+          logger,
+          auth,
+        }),
+      ).resolves.toBeInstanceOf(SwirlSearchEngine);
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'SWIRL did not recognise: nonsense, fuzzy.bogus',
+        ),
+      );
+    });
+
     it('logs but does not throw when SWIRL rejects the tuning block', async () => {
       worker.use(
         http.post(`${BASE_URL}/swirl/index/config/`, () =>
@@ -373,6 +474,115 @@ describe('SwirlSearchEngine', () => {
         location: 'https://github.example.com/Runbook',
         source: 'GitHub',
         score: 3.5,
+      });
+    });
+
+    it('strips SWIRL highlight markers out of a federated document', async () => {
+      // Defensive: current SWIRL keeps title and body clean on the Backstage
+      // path, older ones write the marked up text back over them and a
+      // Backstage renderer shows document text as plain text, so the markers
+      // reached the screen as literal <em>.
+      stubSwirl({
+        search: () =>
+          HttpResponse.json(
+            searchResponse({
+              results: [
+                {
+                  ...federatedResult('Runbook'),
+                  title: 'The <em>Runbook</em> service',
+                  body: 'A <em>runbook</em> for demonstrations.',
+                  title_hit_highlights: ['The <em>Runbook</em> service'],
+                  body_hit_highlights: [
+                    'A <em>runbook</em> for demonstrations.',
+                  ],
+                },
+              ],
+            }),
+          ),
+      });
+      const engine = await SwirlSearchEngine.fromConfig(config(), {
+        logger,
+        auth,
+      });
+
+      const { results } = await engine.query({ term: 'runbook' });
+
+      expect(results[0].document).toEqual({
+        title: 'The Runbook service',
+        text: 'A runbook for demonstrations.',
+        location: 'https://github.example.com/Runbook',
+        source: 'GitHub',
+        score: 3.5,
+      });
+      // The marked up text is not lost, it is in the highlight fields with
+      // this instance's own tags.
+      expect(results[0].highlight!.fields).toEqual({
+        title: `The ${PRE}Runbook${POST} service`,
+        text: `A ${PRE}runbook${POST} for demonstrations.`,
+      });
+    });
+
+    it('strips a custom marker pair out of a federated document', async () => {
+      stubSwirl({
+        search: () =>
+          HttpResponse.json(
+            searchResponse({
+              results: [
+                {
+                  ...federatedResult('Runbook'),
+                  title: 'The [[Runbook]] service',
+                  body: 'A [[runbook]] for demonstrations.',
+                },
+              ],
+            }),
+          ),
+      });
+      const engine = await SwirlSearchEngine.fromConfig(
+        config({ highlight: { startMarker: '[[', endMarker: ']]' } }),
+        { logger, auth },
+      );
+
+      const { results } = await engine.query({ term: 'runbook' });
+
+      expect(results[0].document).toMatchObject({
+        title: 'The Runbook service',
+        text: 'A runbook for demonstrations.',
+      });
+    });
+
+    it('gives a federated result the highlight fields SWIRL now sends', async () => {
+      // The e2e run observed these two lists empty for federated results, so
+      // highlight.fields came back empty while the markers sat in the plain
+      // fields. SWIRL fills them now; this is the shape the engine maps.
+      stubSwirl({
+        search: () =>
+          HttpResponse.json(
+            searchResponse({
+              results: [
+                {
+                  ...federatedResult('Runbook'),
+                  title_hit_highlights: ['The <em>Runbook</em>'],
+                  body_hit_highlights: ['Body of <em>Runbook</em>'],
+                },
+              ],
+            }),
+          ),
+      });
+      const engine = await SwirlSearchEngine.fromConfig(config(), {
+        logger,
+        auth,
+      });
+
+      const { results } = await engine.query({ term: 'runbook' });
+
+      expect(results[0].type).toBe('swirl-federated');
+      expect(results[0].highlight).toEqual({
+        preTag: PRE,
+        postTag: POST,
+        fields: {
+          title: `The ${PRE}Runbook${POST}`,
+          text: `Body of ${PRE}Runbook${POST}`,
+        },
       });
     });
 
