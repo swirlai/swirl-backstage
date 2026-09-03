@@ -84,8 +84,14 @@ search:
     highlight:
       # Default true.
       enabled: true
-      # Longest snippet returned per field, in characters. Default 200.
+      # Longest snippet returned per field, counted in visible characters
+      # rather than markup. Default 200.
       maxChars: 200
+      # The marker pair SWIRL wraps hits in, from its
+      # SWIRL_HIGHLIGHT_START_CHAR and SWIRL_HIGHLIGHT_END_CHAR settings.
+      # Override both together if your SWIRL differs from the defaults.
+      startMarker: <em>
+      endMarker: </em>
 ```
 
 The whole block is `@visibility backend`; none of it reaches the browser.
@@ -96,12 +102,12 @@ The whole block is `@visibility backend`; none of it reaches the browser.
 
 One generation per collator run, per document type:
 
-| Call | When |
-| --- | --- |
-| `POST /swirl/index/<type>/begin/` | the indexer opens |
-| `POST /swirl/index/<type>/<gen>/docs/` | once per batch, retried three times with backoff on 5xx and transport errors |
+| Call                                       | When                                                                                          |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `POST /swirl/index/<type>/begin/`          | the indexer opens                                                                             |
+| `POST /swirl/index/<type>/<gen>/docs/`     | once per batch, retried three times with backoff on 5xx and transport errors                  |
 | `POST /swirl/index/<type>/<gen>/finalize/` | at the end of a run that produced at least one document; swaps the live generation atomically |
-| `POST /swirl/index/<type>/<gen>/abort/` | a run that produced zero documents, or one that failed anywhere in the pipeline |
+| `POST /swirl/index/<type>/<gen>/abort/`    | a run that produced zero documents, or one that failed anywhere in the pipeline               |
 
 The zero-document abort is the guard every Backstage engine needs: a collator that comes back empty must not wipe the index that is currently being served. Because a failed run aborts its own generation rather than half-writing the live one, a crashed collator leaves search working on the last good index.
 
@@ -133,7 +139,15 @@ When SWIRL reports that a requested type has no live index, the engine throws an
 
 ## Highlighting
 
-SWIRL marks hits in `title_hit_highlights` and `body_hit_highlights` with `*`. The engine rewrites those markers to a random per-instance tag pair before handing results to Backstage, the same way the Postgres engine does, so a document body containing an asterisk cannot forge a highlight.
+SWIRL marks hits in `title_hit_highlights` and `body_hit_highlights` with `<em>` and `</em>`, from its `SWIRL_HIGHLIGHT_START_CHAR` and `SWIRL_HIGHLIGHT_END_CHAR` settings. The engine rewrites those markers to a random per-instance tag pair before handing results to Backstage, the same way the Postgres engine does, so a document body containing a literal `<em>` cannot forge a highlight. A SWIRL configured with a different pair is handled by `highlight.startMarker` and `highlight.endMarker`.
+
+`maxChars` budgets visible characters, not markup, and a snippet cut short inside a hit still closes it, so the engine never hands Backstage an unbalanced tag.
+
+## Scores
+
+SWIRL's `MappingResultProcessor` sweeps top level keys it does not recognise into `payload`, so the provider score arrives as `payload.searchprovider_score` rather than beside `swirl_score`. The engine reads it from there and falls back to `swirl_score`.
+
+Ranks stay sequential in the order SWIRL returned, because the relevancy mixer has already ordered results across providers; the engine does not re-sort by score. The score is attached to `swirl-federated` documents as `score`, where it is the only ranking signal a renderer has. Indexed documents are handed back exactly as Backstage collated them.
 
 ## Development
 

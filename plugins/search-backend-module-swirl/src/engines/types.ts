@@ -58,8 +58,23 @@ export type SwirlEngineConfig = {
   highlight: {
     enabled: boolean;
     maxChars: number;
+    startMarker: string;
+    endMarker: string;
   };
 };
+
+/**
+ * The marker pair SWIRL wraps hits in out of the box, from
+ * `SWIRL_HIGHLIGHT_START_CHAR` and `SWIRL_HIGHLIGHT_END_CHAR`.
+ *
+ * @public
+ */
+export const SWIRL_HIGHLIGHT_START_MARKER = '<em>';
+
+/**
+ * @public
+ */
+export const SWIRL_HIGHLIGHT_END_MARKER = '</em>';
 
 /**
  * The relevance tuning block mirrored to SWIRL on startup.
@@ -100,8 +115,27 @@ export type SwirlResult = {
   swirl_score?: number;
   title_hit_highlights?: string[];
   body_hit_highlights?: string[];
-  payload?: Record<string, any> & { backstage?: SwirlBackstagePayload };
+  payload?: Record<string, any> & {
+    backstage?: SwirlBackstagePayload;
+    /**
+     * The provider's own score. SWIRL's MappingResultProcessor sweeps keys it
+     * does not recognise off the top level and into the payload, so the
+     * Tantivy score arrives here rather than beside `swirl_score`.
+     */
+    searchprovider_score?: number;
+  };
 };
+
+/**
+ * Reads the score off a SWIRL result. The provider score lives in the payload
+ * because SWIRL moves unrecognised top level keys there; `swirl_score`, which
+ * the mixer sets, is the fallback.
+ *
+ * @public
+ */
+export function swirlResultScore(result: SwirlResult): number | undefined {
+  return result.payload?.searchprovider_score ?? result.swirl_score;
+}
 
 /**
  * The SWIRL response envelope returned by `/swirl/search/` and

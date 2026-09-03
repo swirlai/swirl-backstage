@@ -71,9 +71,11 @@ describe('SwirlSearchEngine', () => {
     body: `Body of ${title}`,
     url: `/catalog/default/component/${entityRef}`,
     searchprovider: 'Backstage Index',
-    title_hit_highlights: [`*${title}*`],
-    body_hit_highlights: [`Body of *${title}*`],
+    swirl_score: 0.5,
+    title_hit_highlights: [`<em>${title}</em>`],
+    body_hit_highlights: [`Body of <em>${title}</em>`],
     payload: {
+      searchprovider_score: 7.25,
       backstage: {
         type: 'software-catalog',
         document: {
@@ -92,9 +94,10 @@ describe('SwirlSearchEngine', () => {
     body: `Body of ${title}`,
     url: `https://github.example.com/${title}`,
     searchprovider: 'GitHub',
+    swirl_score: 0.5,
     title_hit_highlights: [],
     body_hit_highlights: [],
-    payload: {},
+    payload: { searchprovider_score: 3.5 },
   });
 
   const stubSwirl = (options?: {
@@ -369,10 +372,40 @@ describe('SwirlSearchEngine', () => {
         text: 'Body of Runbook',
         location: 'https://github.example.com/Runbook',
         source: 'GitHub',
+        score: 3.5,
       });
     });
 
-    it('rewrites SWIRL hit markers to its own per instance tags', async () => {
+    it('reads the score out of the payload, where SWIRL sweeps it', async () => {
+      stubSwirl({
+        search: () =>
+          HttpResponse.json(
+            searchResponse({
+              results: [
+                federatedResult('With payload score'),
+                {
+                  ...federatedResult('Without payload score'),
+                  payload: {},
+                },
+              ],
+            }),
+          ),
+      });
+      const engine = await SwirlSearchEngine.fromConfig(config(), {
+        logger,
+        auth,
+      });
+
+      const { results } = await engine.query({ term: 'runbook' });
+
+      // payload.searchprovider_score wins; swirl_score is the fallback.
+      expect((results[0].document as any).score).toBe(3.5);
+      expect((results[1].document as any).score).toBe(0.5);
+      // Rank stays the order SWIRL's mixer returned, not a re-sort by score.
+      expect(results.map(result => result.rank)).toEqual([1, 2]);
+    });
+
+    it('rewrites SWIRL <em> hit markers to its own per instance tags', async () => {
       stubSwirl({
         search: () =>
           HttpResponse.json(
@@ -414,6 +447,88 @@ describe('SwirlSearchEngine', () => {
 
       const { results } = await engine.query({ term: 'petstore' });
 
+      expect(results[0].highlight).toEqual({
+        preTag: PRE,
+        postTag: POST,
+        fields: {},
+      });
+    });
+
+    it('honours a SWIRL configured with a different marker pair', async () => {
+      stubSwirl({
+        search: () =>
+          HttpResponse.json(
+            searchResponse({
+              results: [
+                {
+                  ...federatedResult('Runbook'),
+                  title_hit_highlights: ['[[Runbook]] notes'],
+                },
+              ],
+            }),
+          ),
+      });
+      const engine = await SwirlSearchEngine.fromConfig(
+        config({ highlight: { startMarker: '[[', endMarker: ']]' } }),
+        { logger, auth },
+      );
+
+      const { results } = await engine.query({ term: 'runbook' });
+
+      expect(results[0].highlight!.fields.title).toBe(
+        `${PRE}Runbook${POST} notes`,
+      );
+    });
+
+    it('budgets maxChars against visible text and never leaves a tag open', async () => {
+      stubSwirl({
+        search: () =>
+          HttpResponse.json(
+            searchResponse({
+              results: [
+                {
+                  ...federatedResult('Runbook'),
+                  body_hit_highlights: ['abcd <em>efghij</em> klmn'],
+                },
+              ],
+            }),
+          ),
+      });
+      const engine = await SwirlSearchEngine.fromConfig(
+        config({ highlight: { maxChars: 8 } }),
+        { logger, auth },
+      );
+
+      const { results } = await engine.query({ term: 'runbook' });
+
+      // Eight visible characters: "abcd " plus the first three of the hit,
+      // with the hit closed even though it was cut short.
+      expect(results[0].highlight!.fields.text).toBe(`abcd ${PRE}efg${POST}`);
+    });
+
+    it('leaves a marker in the document body alone', async () => {
+      stubSwirl({
+        search: () =>
+          HttpResponse.json(
+            searchResponse({
+              results: [
+                {
+                  ...federatedResult('Runbook'),
+                  body_hit_highlights: [],
+                  body: 'not a hit: <em>forged</em>',
+                },
+              ],
+            }),
+          ),
+      });
+      const engine = await SwirlSearchEngine.fromConfig(config(), {
+        logger,
+        auth,
+      });
+
+      const { results } = await engine.query({ term: 'runbook' });
+
+      expect(results[0].highlight!.fields.text).toBeUndefined();
       expect(results[0].highlight).toEqual({
         preTag: PRE,
         postTag: POST,

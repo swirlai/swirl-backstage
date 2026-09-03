@@ -37,11 +37,14 @@ import { SwirlNoopIndexer } from './SwirlNoopIndexer';
 import {
   MISSING_INDEX_ERROR_NAME,
   SWIRL_FEDERATED_TYPE,
+  SWIRL_HIGHLIGHT_END_MARKER,
+  SWIRL_HIGHLIGHT_START_MARKER,
   SWIRL_INDEX_PROVIDER_TAG,
   SwirlEngineConfig,
   SwirlPageCursor,
   SwirlResponse,
   SwirlResult,
+  swirlResultScore,
 } from './types';
 
 /**
@@ -385,6 +388,10 @@ export class SwirlSearchEngine implements SearchEngine {
             text: entry.body ?? '',
             location: entry.url ?? '',
             source: entry.searchprovider ?? '',
+            // Federated results are not in any Backstage index, so SWIRL's
+            // score is the only ranking signal a renderer can show. Indexed
+            // documents are handed back exactly as Backstage collated them.
+            score: swirlResultScore(entry),
           },
       rank,
       highlight: this.toHighlight(entry),
@@ -411,9 +418,12 @@ export class SwirlSearchEngine implements SearchEngine {
   }
 
   /**
-   * SWIRL marks hits with a start and end character, `*` by default. Backstage
-   * expects the engine's own per-instance tags instead, so that a result body
-   * containing the marker cannot forge a highlight.
+   * SWIRL wraps hits in a configurable marker pair, `<em>` and `</em>` out of
+   * the box. Backstage expects the engine's own per-instance tags instead, so
+   * that a document body containing the marker cannot forge a highlight.
+   *
+   * The `maxChars` budget counts visible characters, not tags, and the walk
+   * never emits an unbalanced tag: a snippet cut short inside a hit closes it.
    */
   private rewriteHighlight(highlights?: string[]): string | undefined {
     const raw = (highlights ?? []).find(value => Boolean(value));
@@ -421,16 +431,39 @@ export class SwirlSearchEngine implements SearchEngine {
       return undefined;
     }
 
-    let truncated = raw.slice(0, this.options.highlight.maxChars);
-    if ((truncated.match(/\*/g) ?? []).length % 2 === 1) {
-      truncated = truncated.slice(0, truncated.lastIndexOf('*'));
-    }
-
-    return truncated.replace(
-      /\*([^*]+)\*/g,
-      (_match, hit) => `${this.preTag}${hit}${this.postTag}`,
+    const { startMarker, endMarker, maxChars } = this.options.highlight;
+    const pattern = new RegExp(
+      `${escapeRegExp(startMarker)}([\\s\\S]*?)${escapeRegExp(endMarker)}`,
+      'g',
     );
+
+    let out = '';
+    let budget = maxChars;
+    let cursor = 0;
+
+    const take = (value: string, hit: boolean) => {
+      if (budget <= 0 || !value) {
+        return;
+      }
+      const kept = value.slice(0, budget);
+      budget -= kept.length;
+      out += hit ? `${this.preTag}${kept}${this.postTag}` : kept;
+    };
+
+    for (const match of raw.matchAll(pattern)) {
+      const at = match.index ?? 0;
+      take(raw.slice(cursor, at), false);
+      take(match[1], true);
+      cursor = at + match[0].length;
+    }
+    take(raw.slice(cursor), false);
+
+    return out;
   }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function missingIndexError(types?: unknown): Error {
@@ -497,6 +530,11 @@ export function readSwirlConfig(config: Config): SwirlEngineConfig {
     highlight: {
       enabled: highlight?.getOptionalBoolean('enabled') ?? true,
       maxChars: highlight?.getOptionalNumber('maxChars') ?? 200,
+      startMarker:
+        highlight?.getOptionalString('startMarker') ??
+        SWIRL_HIGHLIGHT_START_MARKER,
+      endMarker:
+        highlight?.getOptionalString('endMarker') ?? SWIRL_HIGHLIGHT_END_MARKER,
     },
   };
 }

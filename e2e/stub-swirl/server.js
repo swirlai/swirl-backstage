@@ -35,10 +35,12 @@ const send = (res, status, body) => {
     return;
   }
   const payload = JSON.stringify(body);
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(payload),
-  }).end(payload);
+  res
+    .writeHead(status, {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload),
+    })
+    .end(payload);
 };
 
 const readJson = req =>
@@ -56,26 +58,43 @@ const readJson = req =>
     });
   });
 
+// The marker pair SWIRL wraps hits in, from SWIRL_HIGHLIGHT_START_CHAR and
+// SWIRL_HIGHLIGHT_END_CHAR.
+const HIGHLIGHT_START = '<em>';
+const HIGHLIGHT_END = '</em>';
+
 const asResult = (doc, type, rank, term) => ({
   swirl_rank: rank,
-  swirl_score: 1,
+  swirl_score: 1 / rank,
   searchprovider: type ? 'Backstage Index' : 'Stub Provider',
   title: doc.title ?? '',
   url: doc.location ?? '',
   body: doc.text ?? '',
   title_hit_highlights: mark(doc.title ?? '', term),
   body_hit_highlights: mark(doc.text ?? '', term),
-  payload: type ? { backstage: { type, document: doc } } : {},
+  // SWIRL's MappingResultProcessor sweeps top level keys it does not
+  // recognise into the payload, which is where the provider score lands.
+  payload: {
+    searchprovider_score: 1 / rank,
+    ...(type ? { backstage: { type, document: doc } } : {}),
+  },
 });
 
 const mark = (value, term) =>
   term && value.toLowerCase().includes(term.toLowerCase())
-    ? [value.replace(new RegExp(`(${term})`, 'ig'), '*$1*')]
+    ? [
+        value.replace(
+          new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig'),
+          `${HIGHLIGHT_START}$1${HIGHLIGHT_END}`,
+        ),
+      ]
     : [];
 
 const matches = (doc, term) =>
   !term ||
-  `${doc.title ?? ''} ${doc.text ?? ''}`.toLowerCase().includes(term.toLowerCase());
+  `${doc.title ?? ''} ${doc.text ?? ''}`
+    .toLowerCase()
+    .includes(term.toLowerCase());
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -94,15 +113,20 @@ const server = http.createServer(async (req, res) => {
 
   // GET /swirl/index/
   if (req.method === 'GET' && path === '/swirl/index/') {
-    return send(
-      res,
-      200,
-      [...live.entries()].map(([type, entry]) => ({
-        type,
-        generation: entry.generation,
-        count: entry.documents.length,
-      })),
-    );
+    const types = new Set([...live.keys(), ...open.keys()]);
+    return send(res, 200, {
+      types: [...types].map(type => {
+        const entry = live.get(type);
+        return {
+          type,
+          live: entry?.generation ?? null,
+          doc_count: entry?.documents.length ?? 0,
+          bytes: entry ? Buffer.byteLength(JSON.stringify(entry.documents)) : 0,
+          updated: entry?.updated ?? null,
+          open: open.get(type)?.generation ?? null,
+        };
+      }),
+    });
   }
 
   if (parts[0] === 'swirl' && parts[1] === 'index' && parts[2]) {
@@ -145,7 +169,9 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       const documents = body?.documents;
       if (!Array.isArray(documents) || documents.length > 1000) {
-        return send(res, 400, { detail: 'documents must be an array of <= 1000' });
+        return send(res, 400, {
+          detail: 'documents must be an array of <= 1000',
+        });
       }
       const bad = documents.findIndex(
         doc => !doc?.title || !doc?.text || !doc?.location,
@@ -163,8 +189,11 @@ const server = http.createServer(async (req, res) => {
     // POST /swirl/index/<type>/<gen>/finalize/
     if (req.method === 'POST' && action === 'finalize') {
       if (entry.documents.length === 0) {
-        return send(res, 400, { detail: 'refusing to finalize zero documents' });
+        return send(res, 400, {
+          detail: 'refusing to finalize zero documents',
+        });
       }
+      entry.updated = new Date().toISOString();
       live.set(type, entry);
       open.delete(type);
       return send(res, 200, {

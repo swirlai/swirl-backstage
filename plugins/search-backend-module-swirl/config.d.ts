@@ -52,7 +52,18 @@ export interface Config {
         fuzzy?: { enabled?: boolean; distance?: number };
         bm25?: { k1?: number; b?: number };
       };
-      highlight?: { enabled?: boolean; maxChars?: number };
+      highlight?: {
+        enabled?: boolean;
+        maxChars?: number;
+        /**
+         * The marker pair SWIRL wraps hits in, from its
+         * SWIRL_HIGHLIGHT_START_CHAR and SWIRL_HIGHLIGHT_END_CHAR settings.
+         * Defaults "<em>" and "</em>". Override both together if your SWIRL
+         * is configured with a different pair.
+         */
+        startMarker?: string;
+        endMarker?: string;
+      };
     };
   };
 }
