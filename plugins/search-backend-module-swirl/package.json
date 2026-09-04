@@ -1,6 +1,6 @@
 {
   "name": "@swirl-search/backstage-plugin-search-backend-module-swirl",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A Backstage search backend module that uses SWIRL as the search engine, for indexed Backstage documents and federated results from connected sources.",
   "backstage": {
     "role": "backend-plugin-module",

@@ -87,6 +87,7 @@ export type SwirlTuning = {
   stemmer?: string;
   stopwords?: string[];
   fuzzy?: { enabled?: boolean; distance?: number };
+  /** Stored by SWIRL, not applied by the current engine version. */
   bm25?: { k1?: number; b?: number };
 };
 

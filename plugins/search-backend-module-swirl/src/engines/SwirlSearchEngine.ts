@@ -111,6 +111,15 @@ export class SwirlSearchEngine implements SearchEngine {
   private readonly preTag: string;
   private readonly postTag: string;
 
+  /**
+   * Every document type the search backend has handed this engine an indexer
+   * for. It is the yardstick for a missing index report on a query that named
+   * no types of its own. The federated type is deliberately left out: nothing
+   * is ever written to a SWIRL index under it, so it can never be part of a
+   * missing set.
+   */
+  private readonly indexedTypes = new Set<string>();
+
   private constructor(
     options: SwirlEngineConfig,
     deps: SwirlSearchEngineOptions,
@@ -239,6 +248,8 @@ export class SwirlSearchEngine implements SearchEngine {
       return new SwirlNoopIndexer({ type, logger: this.logger });
     }
 
+    this.indexedTypes.add(type);
+
     return new SwirlIndexer({
       type,
       batchSize: this.options.indexerBatchSize,
@@ -260,7 +271,30 @@ export class SwirlSearchEngine implements SearchEngine {
       ? await this.fetchResultPage(concrete, concrete.cursor, token)
       : await this.fetchFirstPage(concrete, token);
 
-    this.assertIndexPresent(result);
+    const missing = this.missingIndexTypes(result);
+    if (missing) {
+      if (this.coversEveryRequestedType(missing, concrete.indexTypes)) {
+        throw missingIndexError(missing);
+      }
+
+      const stillIndexed = this.requestedTypes(concrete.indexTypes).filter(
+        type => !missing.includes(type),
+      );
+      this.logger.debug(
+        `SWIRL has no live index for ${missing.join(
+          ', ',
+        )}, but this query also covers ${stillIndexed.join(
+          ', ',
+        )}, so the partial miss is reported as an empty page rather than an error.`,
+      );
+
+      // The hard form is a 404 and carries no envelope to read. The soft form
+      // rides along with an ordinary 200, so whatever SWIRL did find falls
+      // through to the normal path below, empty result list included.
+      if (!result.ok) {
+        return { results: [], numberOfResults: 0 };
+      }
+    }
 
     if (!result.ok) {
       throw new Error(
@@ -370,17 +404,18 @@ export class SwirlSearchEngine implements SearchEngine {
   }
 
   /**
-   * SWIRL reports a type with no live index either as a 404 with an
-   * `missing_index` error body, or as a structured `__MISSING_INDEX__` entry
-   * in the response messages. Either way the caller asked for something that
-   * has never been indexed, which is worth saying out loud rather than
-   * returning an empty result set or a bare 500.
+   * The document types SWIRL reported as having no live index, or undefined
+   * when it reported none.
+   *
+   * SWIRL says this either as a 404 with a `missing_index` error body, or as
+   * a structured `__MISSING_INDEX__` entry in the response messages. The two
+   * forms mean the same thing and are treated the same way.
    */
-  private assertIndexPresent(result: SwirlRequestResult): void {
+  private missingIndexTypes(result: SwirlRequestResult): string[] | undefined {
     const body = result.body;
 
     if (result.status === 404 && body?.error === 'missing_index') {
-      throw missingIndexError(body?.types);
+      return typeList(body?.types);
     }
 
     for (const message of body?.messages ?? []) {
@@ -401,9 +436,47 @@ export class SwirlSearchEngine implements SearchEngine {
       }
 
       if (parsed?.type === '__MISSING_INDEX__') {
-        throw missingIndexError(parsed.types);
+        return typeList(parsed.types);
       }
     }
+
+    return undefined;
+  }
+
+  /**
+   * The types this query is entitled to hear about. A query that named types
+   * is measured against those; one that named none is measured against every
+   * type this engine has been given an indexer for.
+   */
+  private requestedTypes(indexTypes?: string[]): string[] {
+    return indexTypes?.length ? indexTypes : [...this.indexedTypes];
+  }
+
+  /**
+   * Whether a missing index report accounts for the whole query.
+   *
+   * A type that is legitimately and permanently empty - TechDocs on a portal
+   * with no mkdocs content is the everyday case - must not turn a search that
+   * simply matched nothing into an error, because under `permission.enabled`
+   * the search router puts every registered type on every query. So the loud
+   * `MissingIndexError` is kept for the case it was written for: nothing the
+   * caller asked for is indexed at all. A partial miss is a soft condition.
+   *
+   * With nothing to measure against - no types requested and no indexer ever
+   * handed out, or a report that names no types - the loud answer stands,
+   * because there is no evidence that anything else was searched.
+   */
+  private coversEveryRequestedType(
+    missing: string[],
+    indexTypes?: string[],
+  ): boolean {
+    const requested = this.requestedTypes(indexTypes);
+    if (!requested.length || !missing.length) {
+      return true;
+    }
+
+    const gone = new Set(missing);
+    return requested.every(type => gone.has(type));
   }
 
   private toIndexableResult(entry: SwirlResult, rank: number): IndexableResult {
@@ -543,9 +616,13 @@ function describeTuningError(body: any): string {
   return detail ? ` ${detail}` : '';
 }
 
-function missingIndexError(types?: unknown): Error {
-  const named =
-    Array.isArray(types) && types.length ? types.join(', ') : undefined;
+/** The `types` array off a SWIRL missing index report, normalised. */
+function typeList(types: unknown): string[] {
+  return Array.isArray(types) ? types.map(String).filter(Boolean) : [];
+}
+
+function missingIndexError(types: string[]): Error {
+  const named = types.length ? types.join(', ') : undefined;
   const error = new Error(
     named
       ? `SWIRL has no live index for the requested document type(s): ${named}. Wait for the collator to run, or check the SWIRL ingest logs.`

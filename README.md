@@ -8,6 +8,40 @@ SWIRL for Backstage: the npm side of the integration.
 
 The service side (the SWIRL ingest API, the Backstage bearer verifier, the Tantivy index and the container image) lives in the SWIRL repositories.
 
+## Install it in your own Backstage
+
+```sh
+# from your Backstage root
+yarn --cwd packages/backend add @swirl-search/backstage-plugin-search-backend-module-swirl
+```
+
+On a fresh `@backstage/create-app` that command fails for the first three days
+after every release:
+
+```
+YN0016: The version for tag "latest" is quarantined, and no lower version is available
+```
+
+create-app writes `npmMinimalAgeGate: 3d` into `.yarnrc.yml`, a Yarn 4
+supply-chain control that refuses any package published in the last 72 hours
+unless its scope is preapproved. Add the scope, then run the command again:
+
+```yaml
+# .yarnrc.yml
+nodeLinker: node-modules
+npmMinimalAgeGate: 3d
+npmPreapprovedPackages:
+  - '@backstage/*'
+  - '@swirl-search/*'
+```
+
+Do not set `npmMinimalAgeGate: 0`; that turns the control off for every package
+in the repository.
+
+The rest - wiring the module into the backend, the `search.swirl` config block,
+and running the SWIRL container it talks to - is in
+[the module README](plugins/search-backend-module-swirl/README.md).
+
 ## Layout
 
 ```

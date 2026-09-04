@@ -56,13 +56,14 @@ which is what you want while editing a test.
 
 ## The assertions
 
-| File                        | What it asserts                                                                                                                                                                          |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/gate-zero.test.js`   | The seven gate-zero cases from `reboot-design/gauntlet-results.md`, end to end: `tech`, `abac`, `foo-bar.com`, `store`, `mes`, `wayback`, `petsotre`                                     |
-| `tests/federated.test.js`   | A `swirl-federated` result located at the stub source appears, with clean document text and populated highlight fields; asking only for `software-catalog` leaves the federated lane out |
-| `tests/filters.test.js`     | `kind=component` plus `lifecycle=production` returns only matching documents, and drops one the term alone would have kept                                                               |
-| `tests/permissions.test.js` | The guest token shape, and that the query runs through `AuthorizedSearchEngine`                                                                                                          |
-| `tests/restart.test.js`     | The container comes back, and the index is on disk                                                                                                                                       |
+| File                          | What it asserts                                                                                                                                                                                                                                    |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/gate-zero.test.js`     | The seven gate-zero cases from `reboot-design/gauntlet-results.md`, end to end: `tech`, `abac`, `foo-bar.com`, `store`, `mes`, `wayback`, `petsotre`                                                                                               |
+| `tests/federated.test.js`     | A `swirl-federated` result located at the stub source appears, with clean document text and populated highlight fields; asking only for `software-catalog` leaves the federated lane out                                                           |
+| `tests/filters.test.js`       | `kind=component` plus `lifecycle=production` returns only matching documents, and drops one the term alone would have kept                                                                                                                         |
+| `tests/missing-index.test.js` | B2 from the post-publish smoke test: a zero-hit query over `software-catalog` and `techdocs`, with techdocs legitimately unindexed, answers 200 with an empty page rather than 500; a query for `techdocs` alone still reports `MissingIndexError` |
+| `tests/permissions.test.js`   | The guest token shape, and that the query runs through `AuthorizedSearchEngine`                                                                                                                                                                    |
+| `tests/restart.test.js`       | The container comes back, and the index is on disk                                                                                                                                                                                                 |
 
 The files are not independent - the restart case takes the container down - so
 `e2e/testSequencer.js` pins the order and `maxWorkers: 1` keeps them one at a

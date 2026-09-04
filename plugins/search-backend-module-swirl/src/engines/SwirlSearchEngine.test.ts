@@ -133,6 +133,33 @@ describe('SwirlSearchEngine', () => {
     );
   };
 
+  /**
+   * Hands the engine an indexer for each type, the way the search backend
+   * does at collation time, so that a query which names no types has
+   * something to be measured against. The stream opens a generation on
+   * construction and aborts it on end, so both endpoints are stubbed.
+   */
+  const seedIndexedTypes = async (
+    engine: SwirlSearchEngine,
+    types: string[],
+  ) => {
+    worker.use(
+      http.post(`${BASE_URL}/swirl/index/:type/begin/`, () =>
+        HttpResponse.json({ generation: 'gen-1' }, { status: 201 }),
+      ),
+      http.post(`${BASE_URL}/swirl/index/:type/:gen/abort/`, () =>
+        HttpResponse.json(null, { status: 204 }),
+      ),
+    );
+
+    for (const type of types) {
+      const indexer = await engine.getIndexer(type);
+      indexer.on('error', () => {});
+      indexer.end();
+      await new Promise(resolve => indexer.on('close', resolve));
+    }
+  };
+
   beforeEach(() => {
     searchCalls = [];
     resultsCalls = [];
@@ -855,6 +882,157 @@ describe('SwirlSearchEngine', () => {
       await expect(
         engine.query({ term: 'tech', types: ['techdocs'] }),
       ).rejects.toMatchObject({ name: 'MissingIndexError' });
+    });
+
+    it('throws MissingIndexError when the 404 names no types at all', async () => {
+      // Nothing to measure the report against, so the loud answer stands.
+      stubSwirl({
+        search: () =>
+          HttpResponse.json({ error: 'missing_index' }, { status: 404 }),
+      });
+      const engine = await SwirlSearchEngine.fromConfig(config(), {
+        logger,
+        auth,
+      });
+
+      await expect(
+        engine.query({ term: 'tech', types: ['software-catalog', 'techdocs'] }),
+      ).rejects.toMatchObject({ name: 'MissingIndexError' });
+    });
+
+    it('returns an empty page when a 404 names only some of the requested types', async () => {
+      // The everyday case: TechDocs is legitimately empty on a portal with no
+      // mkdocs content, and under permissions the router puts it on every
+      // query. A term that matched nothing must not become an error.
+      stubSwirl({
+        search: () =>
+          HttpResponse.json(
+            { error: 'missing_index', types: ['techdocs'] },
+            { status: 404 },
+          ),
+      });
+      const engine = await SwirlSearchEngine.fromConfig(config(), {
+        logger,
+        auth,
+      });
+
+      const result = await engine.query({
+        term: 'petstore',
+        types: ['software-catalog', 'techdocs'],
+      });
+
+      expect(result.results).toEqual([]);
+      expect(result.numberOfResults).toBe(0);
+      expect(result.nextPageCursor).toBeUndefined();
+      expect(result.previousPageCursor).toBeUndefined();
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.stringContaining('no live index for techdocs'),
+      );
+    });
+
+    it('measures a 404 against every type it has indexed when the query named none', async () => {
+      stubSwirl({
+        search: () =>
+          HttpResponse.json(
+            { error: 'missing_index', types: ['techdocs'] },
+            { status: 404 },
+          ),
+      });
+      const engine = await SwirlSearchEngine.fromConfig(config(), {
+        logger,
+        auth,
+      });
+      await seedIndexedTypes(engine, ['software-catalog', 'techdocs']);
+
+      const result = await engine.query({ term: 'petstore' });
+
+      expect(result.results).toEqual([]);
+      expect(result.numberOfResults).toBe(0);
+    });
+
+    it('throws when every type it has indexed is missing and the query named none', async () => {
+      stubSwirl({
+        search: () =>
+          HttpResponse.json(
+            { error: 'missing_index', types: ['software-catalog', 'techdocs'] },
+            { status: 404 },
+          ),
+      });
+      const engine = await SwirlSearchEngine.fromConfig(config(), {
+        logger,
+        auth,
+      });
+      await seedIndexedTypes(engine, ['software-catalog', 'techdocs']);
+
+      await expect(engine.query({ term: 'petstore' })).rejects.toMatchObject({
+        name: 'MissingIndexError',
+        message: expect.stringContaining('software-catalog, techdocs'),
+      });
+    });
+
+    it('returns an empty page for a soft missing index message with no results', async () => {
+      stubSwirl({
+        search: () =>
+          HttpResponse.json(
+            searchResponse({
+              messages: [
+                'SWIRL 5.0',
+                JSON.stringify({
+                  type: '__MISSING_INDEX__',
+                  types: ['techdocs'],
+                }),
+              ],
+              results: [],
+              info: {
+                search: { id: 4711 },
+                results: { found_total: 0, retrieved_total: 0 },
+              },
+            }),
+          ),
+      });
+      const engine = await SwirlSearchEngine.fromConfig(config(), {
+        logger,
+        auth,
+      });
+
+      const result = await engine.query({
+        term: 'petstore',
+        types: ['software-catalog', 'techdocs'],
+      });
+
+      expect(result.results).toEqual([]);
+      expect(result.numberOfResults).toBe(0);
+      expect(result.nextPageCursor).toBeUndefined();
+    });
+
+    it('keeps the results that came with a soft missing index message', async () => {
+      stubSwirl({
+        search: () =>
+          HttpResponse.json(
+            searchResponse({
+              messages: [
+                'SWIRL 5.0',
+                JSON.stringify({
+                  type: '__MISSING_INDEX__',
+                  types: ['techdocs'],
+                }),
+              ],
+              results: [indexedResult('One', 'one')],
+            }),
+          ),
+      });
+      const engine = await SwirlSearchEngine.fromConfig(config(), {
+        logger,
+        auth,
+      });
+
+      const result = await engine.query({
+        term: 'one',
+        types: ['software-catalog', 'techdocs'],
+      });
+
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].document.title).toBe('One');
     });
 
     it('throws a plain error on any other SWIRL failure', async () => {

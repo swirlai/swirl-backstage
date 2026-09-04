@@ -9,6 +9,7 @@ const ORDER = [
   'gate-zero.test.js',
   'federated.test.js',
   'filters.test.js',
+  'missing-index.test.js',
   'permissions.test.js',
   'restart.test.js',
 ];

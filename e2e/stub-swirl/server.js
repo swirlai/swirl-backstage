@@ -23,6 +23,26 @@ const http = require('node:http');
 const PORT = Number(process.env.PORT ?? 8000);
 const TYPE = /^[a-z0-9-]{1,64}$/;
 
+// SWIRL has two ways of saying that a requested type has no live index: the
+// hard form, a 404 whose body is {"error": "missing_index", "types": [...]},
+// and the soft form, an ordinary 200 carrying a structured __MISSING_INDEX__
+// entry in `messages` beside whatever the live types did match. Both are real
+// and the engine has to handle both, so the stub can produce either.
+//
+//   STUB_SWIRL_MISSING_INDEX_FORM=soft node e2e/stub-swirl/server.js
+//   GET /swirl/search/?...&stub_missing_index=soft     (per request)
+const MISSING_INDEX_FORMS = ['hard', 'soft'];
+const DEFAULT_MISSING_INDEX_FORM =
+  process.env.STUB_SWIRL_MISSING_INDEX_FORM ?? 'hard';
+
+if (!MISSING_INDEX_FORMS.includes(DEFAULT_MISSING_INDEX_FORM)) {
+  throw new Error(
+    `STUB_SWIRL_MISSING_INDEX_FORM must be one of ${MISSING_INDEX_FORMS.join(
+      ', ',
+    )}, not ${DEFAULT_MISSING_INDEX_FORM}`,
+  );
+}
+
 const live = new Map(); // type -> { generation, documents }
 const open = new Map(); // type -> { generation, documents }
 const searches = new Map(); // id -> results
@@ -218,7 +238,9 @@ const server = http.createServer(async (req, res) => {
     const providers = (url.searchParams.get('providers') ?? '').split(',');
 
     const missing = wanted.filter(type => !live.has(type));
-    if (missing.length) {
+    const form =
+      url.searchParams.get('stub_missing_index') ?? DEFAULT_MISSING_INDEX_FORM;
+    if (missing.length && form !== 'soft') {
       return send(res, 404, { error: 'missing_index', types: missing });
     }
 
@@ -248,7 +270,7 @@ const server = http.createServer(async (req, res) => {
     );
     searches.set(id, results);
 
-    return send(res, 200, envelope(id, results, url));
+    return send(res, 200, envelope(id, results, url, missing));
   }
 
   // GET /swirl/results/
@@ -264,13 +286,18 @@ const server = http.createServer(async (req, res) => {
   return send(res, 404, { detail: `no route for ${req.method} ${path}` });
 });
 
-function envelope(id, results, url) {
+function envelope(id, results, url, missing = []) {
   const size = Number(url.searchParams.get('results_requested') ?? 25);
   const page = Number(url.searchParams.get('page') ?? 1);
   const start = (page - 1) * size;
 
   return {
-    messages: ['stub-swirl'],
+    messages: [
+      'stub-swirl',
+      ...(missing.length
+        ? [JSON.stringify({ type: '__MISSING_INDEX__', types: missing })]
+        : []),
+    ],
     info: {
       search: { id },
       results: {

@@ -13,6 +13,39 @@ Identity travels with the query. The search router mints a plugin token for each
 
 ## Install
 
+### First, allow the scope in `.yarnrc.yml`
+
+A fresh `@backstage/create-app` ships this:
+
+```yaml
+# .yarnrc.yml, as create-app writes it
+nodeLinker: node-modules
+npmMinimalAgeGate: 3d
+npmPreapprovedPackages:
+  - '@backstage/*'
+```
+
+`npmMinimalAgeGate: 3d` is a Yarn 4 supply-chain control that refuses any
+package published in the last 72 hours unless its scope is preapproved. For the
+first three days after every release of this package, `yarn add` fails with
+`YN0016: All versions satisfying "x.y.z" are quarantined`, whether or not you
+pin the version. Add the scope:
+
+```yaml
+# .yarnrc.yml
+nodeLinker: node-modules
+npmMinimalAgeGate: 3d
+npmPreapprovedPackages:
+  - '@backstage/*'
+  - '@swirl-search/*'
+```
+
+Preapproving the scope is the Backstage-native escape hatch. Do not set
+`npmMinimalAgeGate: 0`; that turns the control off for every package in the
+repository.
+
+### Then install
+
 ```sh
 # from your Backstage root
 yarn --cwd packages/backend add @swirl-search/backstage-plugin-search-backend-module-swirl
@@ -63,7 +96,8 @@ search:
       # Per-query federation timeout in ms, passed to SWIRL. Default 5000.
       timeoutMs: 5000
 
-    # Relevance tuning, mirrored to SWIRL on startup.
+    # Relevance tuning, mirrored to SWIRL on startup. Nested camelCase, which
+    # is the only shape config.d.ts accepts; see the note below the block.
     tuning:
       fieldBoosts:
         titleExact: 3
@@ -77,6 +111,8 @@ search:
       fuzzy:
         enabled: true
         distance: 1
+      # Stored by SWIRL, not applied by the current engine version. Setting it
+      # changes no ranking; the module logs a warning at startup saying so.
       bm25:
         k1: 1.2
         b: 0.75
@@ -95,6 +131,22 @@ search:
 ```
 
 The whole block is `@visibility backend`; none of it reaches the browser.
+
+### Write the tuning keys in camelCase
+
+SWIRL accepts both the nested camelCase names above and its own flat
+snake_case names (`title_exact_boost`, `ngram_min`, `fuzzy_enabled` and the
+rest) on the tuning endpoint. This package's `config.d.ts` declares only the
+camelCase shape, so a repository that runs `backstage-cli config:check
+--strict` - standard Backstage practice, and standard in CI - rejects the flat
+names:
+
+```
+Config must NOT have additional properties { additionalProperty=title_exact_boost } at /search/swirl/tuning
+```
+
+Write camelCase. SWIRL folds those names onto its own before applying them, so
+nothing is lost, and the engine logs the keys SWIRL accepted at startup.
 
 ## How it talks to SWIRL
 
@@ -135,7 +187,12 @@ On startup the module posts the `tuning` block to `POST /swirl/index/config/`, s
 
 ### Errors
 
-When SWIRL reports that a requested type has no live index, the engine throws an error named `MissingIndexError` rather than returning an empty page, so the cause is visible instead of looking like a query that simply matched nothing. SWIRL reports this either as a `404` whose body is `{"error": "missing_index", "types": [...]}`, or as a structured `{"type": "__MISSING_INDEX__", "types": [...]}` entry in the response `messages` array.
+SWIRL reports a type with no live index either as a `404` whose body is `{"error": "missing_index", "types": [...]}`, or as a structured `{"type": "__MISSING_INDEX__", "types": [...]}` entry in the response `messages` array. The engine treats the two forms the same way, and what it does with them depends on how much of the query the report accounts for:
+
+- **Every type the query asked for is missing.** The engine throws an error named `MissingIndexError`, so the cause is visible instead of looking like a query that simply matched nothing. A query that named no types is measured against every type the search backend has handed this engine an indexer for.
+- **Only some of them are missing.** The engine logs at debug and answers normally: the results that did come back if there are any, an empty page if there are not.
+
+The second case is the ordinary one on a real portal. A type can be legitimately and permanently empty - TechDocs on a portal with no mkdocs content is the everyday example, where the collator's zero-document abort correctly leaves it unindexed - and under `permission.enabled` the search router puts every registered type on every query. A search that matches nothing has to come back as "no results", not as an error page.
 
 ## Highlighting
 

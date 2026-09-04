@@ -39,7 +39,17 @@ export interface Config {
         /** Per-query federation timeout in ms passed to SWIRL. Default 5000. */
         timeoutMs?: number;
       };
-      /** Relevance tuning, mirrored to SWIRL on startup */
+      /**
+       * Relevance tuning, mirrored to SWIRL on startup.
+       *
+       * These are the nested camelCase names, and they are the only shape
+       * this schema accepts. SWIRL also takes its own flat snake_case names
+       * (title_exact_boost, ngram_min, fuzzy_enabled and the rest) over the
+       * same endpoint, but writing those here fails
+       * `backstage-cli config:check --strict`, which is standard practice in
+       * a Backstage repo. SWIRL folds the camelCase names onto its own, so
+       * what you write here is what SWIRL applies; write camelCase.
+       */
       tuning?: {
         fieldBoosts?: {
           titleExact?: number;
@@ -50,6 +60,13 @@ export interface Config {
         stemmer?: string;
         stopwords?: string[];
         fuzzy?: { enabled?: boolean; distance?: number };
+        /**
+         * Stored by SWIRL, not applied by the current engine version: the
+         * Tantivy lane does not expose BM25 parameters, and SWIRL says so in
+         * its answer to the startup tuning call, which the module logs as a
+         * warning. Kept in the schema so that configs which already set it
+         * keep validating; setting it has no effect on ranking.
+         */
         bm25?: { k1?: number; b?: number };
       };
       highlight?: {
