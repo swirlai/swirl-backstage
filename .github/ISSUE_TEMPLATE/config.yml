@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/swirlai/swirl-backstage/discussions
+    about: Ask how something works, or say what you would want next.
+  - name: Documentation
+    url: https://docs.swirlaiconnect.com/backstage-overview
+    about: Install steps, configuration, and the sources.

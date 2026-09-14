@@ -1,0 +1,49 @@
+name: Install report
+description: Tell us how the install went, good or bad. Two minutes, no code required.
+title: "Install report: "
+labels: ["install-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying SWIRL for Backstage. Every report shapes what we fix next.
+        Docs: https://docs.swirlaiconnect.com/backstage-overview
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: How did it go?
+      options:
+        - It works, search results improved
+        - It works, results look about the same
+        - It installed but search is worse or broken
+        - It did not install
+    validations:
+      required: true
+  - type: dropdown
+    id: previous_engine
+    attributes:
+      label: Which engine were you on before?
+      options:
+        - Lunr (the default)
+        - Postgres
+        - Elasticsearch or OpenSearch
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Backstage version, this package version, and the swirlai/swirl-backstage image tag.
+      placeholder: "Backstage 1.44, package 0.1.1, image 0.1.1"
+  - type: textarea
+    id: query
+    attributes:
+      label: A query that got better, or worse
+      description: The search term and what came back, before and after if you have it.
+      placeholder: "tech: before, three team entities; after, tech-radar"
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: What was confusing, what took longest, what you expected and did not get.
