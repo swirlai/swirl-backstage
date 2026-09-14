@@ -111,6 +111,14 @@ With no SWIRL running, start the stub instead:
 node e2e/stub-swirl/server.js
 ```
 
+## Tell us how it went
+
+If you install this, we would like to hear about it, whether it worked or not.
+Open an [install report](https://github.com/swirlai/swirl-backstage/issues/new?template=install-report.yml)
+(two minutes, no code needed), or start a
+[discussion](https://github.com/swirlai/swirl-backstage/discussions) with a
+question or an idea. A star on the repo helps other Backstage users find it.
+
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE).
